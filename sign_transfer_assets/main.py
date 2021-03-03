@@ -1,35 +1,13 @@
 import os
-import requests
 from dotenv import load_dotenv
 
-from .util import BaseUriSession
+from .util import SignSession
 
 
 class Sign:
-    def __init__(self, integration_key, base_uri):
-        self.integration_key = f"Bearer {integration_key}"
-
-        self.session = BaseUriSession(base_uri)
-        self.session.headers.update({"Authorization": self.integration_key})
-
-        self.status = set()
-
-    @property
-    def user(self):
-        user_string = self.session.headers.get("x-api-user", None)
-        if user_string is None:
-            return None
-        prefix = "email:"
-        if user_string.startswith(prefix):
-            return user_string[len(prefix) :]
-
-    @user.setter
-    def user(self, user):
-        self.session.headers.update({"x-api-user": f"email:{user}"})
-
-    @user.deleter
-    def user(self):
-        self.session.headers.update({"x-api-user": None})
+    def __init__(self, integration_key, base_uri, user=None):
+        self.session = SignSession(base_uri, integration_key, user)
+        self.user = None
 
     def validate(self, resp, code=200):
         if resp.status_code != code:
@@ -43,6 +21,22 @@ class Sign:
 
     def base_uri(self):
         pass
+
+    def get_template_list(self, cur=None):
+        url = f"/libraryDocuments"
+        params = {
+            "cursor": cur,
+            "pageSize": 1000,
+        }
+        resp = self.session.get(url, params=params)
+        self.validate(resp)
+        return resp.json()
+
+    def get_template_list_all(self, cur=None):
+        data = self.get_template_list(cur)
+        yield from [template["id"] for template in data["libraryDocumentList"]]
+        if data.get("page", {}).get("nextCursor", None):
+            yield from self.get_template_list_all(next)
 
     def get_template(self, id):
         url = f"/libraryDocuments/{id}"
@@ -110,7 +104,7 @@ class Sign:
     def clone_template(self, id, sender=None, reciever=None):
         old_user = self.user
         if sender:
-            self.user = sender
+            self.session.user = sender
 
         # Fetch Template Data
         template_data = self.get_template(id)
@@ -118,15 +112,14 @@ class Sign:
         fields = self.get_template_fields(id)
 
         if reciever:
-            self.user = reciever
+            self.session.user = reciever
 
         # Create new Template
-        # print([doc for doc in docs])
         transient_ids = self.bulk_create_transient(docs)
         new_template = self.create_template(template_data, transient_ids)
         self.update_template_fields(new_template["id"], fields)
 
-        self.user = old_user
+        self.session.user = old_user
 
         return new_template["id"]
 
@@ -137,7 +130,7 @@ if __name__ == "__main__":
     base_uri = os.getenv("BASE_URI") + "api/rest/v6/"
     sign = Sign(integration_key, base_uri)
 
-    template = "CBJCHBCAABAApwrYpRhhMqui0AVAW1WPkE6mcNWaBdfs"
+    template = "CBJCHBCAABAAuPLJTo7TNk6qevCR-HShHLDmkpz898OS"
     sender = "travis@houseofkrause.org"
     reciever = "travis@houseofkrause.org"
 
